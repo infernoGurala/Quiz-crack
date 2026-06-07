@@ -6,6 +6,11 @@ const toggleCard = document.getElementById("toggleCard");
 const toggleValue = document.getElementById("toggleValue");
 const toggleSwitchIcon = document.getElementById("toggleSwitchIcon");
 
+const ghostToggleCard = document.getElementById("ghostToggleCard");
+const ghostToggleValue = document.getElementById("ghostToggleValue");
+const ghostSwitchIcon = document.getElementById("ghostSwitchIcon");
+const ghostStatusIcon = document.getElementById("ghostStatusIcon");
+
 const apiKeyInput = document.getElementById("apiKeyInput");
 const toggleVisibility = document.getElementById("toggleVisibility");
 const visibilityIcon = document.getElementById("visibilityIcon");
@@ -50,6 +55,11 @@ async function loadSettings() {
   const stateData = await chrome.storage.local.get("extension_enabled");
   const enabled = stateData.extension_enabled !== false; // default to true
   updateToggleUI(enabled);
+
+  // 4. Load Ghost Mode State
+  const ghostData = await chrome.storage.local.get("ghost_mode");
+  const ghostEnabled = ghostData.ghost_mode === true;
+  updateGhostToggleUI(ghostEnabled);
 }
 
 // Update Toggle Switch UI State
@@ -64,6 +74,32 @@ function updateToggleUI(enabled) {
     toggleSwitchIcon.textContent = "toggle_off";
   }
 }
+
+// Update Ghost Mode Toggle UI State
+function updateGhostToggleUI(enabled) {
+  if (enabled) {
+    ghostToggleCard.classList.add("active");
+    ghostToggleValue.textContent = "On";
+    ghostSwitchIcon.textContent = "toggle_on";
+    ghostStatusIcon.textContent = "visibility_off";
+  } else {
+    ghostToggleCard.classList.remove("active");
+    ghostToggleValue.textContent = "Off";
+    ghostSwitchIcon.textContent = "toggle_off";
+    ghostStatusIcon.textContent = "visibility";
+  }
+}
+
+// Ghost Mode Toggle Click
+ghostToggleCard.addEventListener("click", async () => {
+  const ghostData = await chrome.storage.local.get("ghost_mode");
+  const currentlyEnabled = ghostData.ghost_mode === true;
+  const nextState = !currentlyEnabled;
+
+  await chrome.storage.local.set({ ghost_mode: nextState });
+  updateGhostToggleUI(nextState);
+  showStatus(nextState ? "Ghost Mode enabled — subtle toasts" : "Ghost Mode disabled — normal toasts", "success");
+});
 
 // Toggle Activation State on Click
 toggleCard.addEventListener("click", async () => {

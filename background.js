@@ -80,8 +80,10 @@ async function markKeyExhausted(keyString) {
 
 // Toast sender with auto-injection backup
 async function sendToast(tabId, text, variant = "action") {
+  const ghostData = await chrome.storage.local.get("ghost_mode");
+  const ghost = ghostData.ghost_mode === true;
   try {
-    await chrome.tabs.sendMessage(tabId, { type: "agent-toast", text, variant });
+    await chrome.tabs.sendMessage(tabId, { type: "agent-toast", text, variant, ghost });
   } catch (err) {
     // If content script is not loaded, attempt to inject it
     try {
@@ -90,7 +92,7 @@ async function sendToast(tabId, text, variant = "action") {
         files: ["content.js"]
       });
       // Retry sending toast
-      await chrome.tabs.sendMessage(tabId, { type: "agent-toast", text, variant });
+      await chrome.tabs.sendMessage(tabId, { type: "agent-toast", text, variant, ghost });
     } catch (injectErr) {
       console.warn("Could not inject content script or display toast:", injectErr);
     }
