@@ -65,6 +65,10 @@ const MODEL_METADATA = {
   "meta-llama/llama-3.3-70b-instruct:free": {
     context: "131,072 tokens",
     caps: "🎁 Completely free to use, highly capable open model."
+  },
+  "google/gemini-3.1-flash-lite": {
+    context: "1,048,576 tokens",
+    caps: "📉 Fast, lightweight, and very low-cost. Good for simple factual queries."
   }
 };
 
