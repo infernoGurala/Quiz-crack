@@ -1,16 +1,16 @@
-const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-const MODEL    = "llama-3.3-70b-versatile";
-
-// Key rotation & persistent cooldown logic
-// Key rotation & persistent cooldown logic excluding already attempted keys, filtered by provider
-async function getActiveKeyExcluding(attemptedKeys = [], provider = "groq") {
-  const data = await chrome.storage.local.get(["groq_api_keys", "current_key_idx", "rate_limit_cooldowns"]);
+// Key rotation & persistent cooldown logic excluding already attempted keys
+async function getActiveKeyExcluding(attemptedKeys = []) {
+  let data = await chrome.storage.local.get(["openrouter_api_keys", "groq_api_keys", "current_key_idx", "rate_limit_cooldowns"]);
   
-  // Filter by status !== invalid AND provider (defaulting to groq for backwards-compatibility)
-  const storedKeys = (data.groq_api_keys || []).filter(k => {
-    const kp = k.provider || "groq";
-    return k.status !== "invalid" && kp === provider;
-  });
+  // Storage migration if openrouter_api_keys is missing but groq_api_keys exists
+  if (data.groq_api_keys && !data.openrouter_api_keys) {
+    const migrated = data.groq_api_keys.filter(k => k.provider === "openrouter");
+    await chrome.storage.local.set({ openrouter_api_keys: migrated });
+    await chrome.storage.local.remove("groq_api_keys");
+    data.openrouter_api_keys = migrated;
+  }
+  
+  const storedKeys = (data.openrouter_api_keys || []).filter(k => k.status !== "invalid");
   
   if (storedKeys.length === 0) return null;
 
@@ -38,8 +38,8 @@ async function getActiveKeyExcluding(attemptedKeys = [], provider = "groq") {
     }
   }
 
-  // Fallback: oldest non-attempted key matching provider
-  console.warn(`All non-attempted ${provider} keys in cooldown. Returning the one with oldest rate-limit timestamp.`);
+  // Fallback: oldest non-attempted key
+  console.warn("All non-attempted OpenRouter keys in cooldown. Returning the one with oldest rate-limit timestamp.");
   let oldestIdx = -1;
   let oldestTime = Infinity;
   for (let i = 0; i < storedKeys.length; i++) {
@@ -66,11 +66,11 @@ async function markKeyExhausted(keyString) {
   const cooldowns = data.rate_limit_cooldowns || {};
   cooldowns[keyString] = Date.now();
   await chrome.storage.local.set({ rate_limit_cooldowns: cooldowns });
-  console.log(`Key rate-limit cooldown registered in storage.`);
+  console.log("Key rate-limit cooldown registered in storage.");
   
   // Try to pre-emptively advance index
-  const keysData = await chrome.storage.local.get(["groq_api_keys", "current_key_idx"]);
-  const storedKeys = keysData.groq_api_keys || [];
+  const keysData = await chrome.storage.local.get(["openrouter_api_keys", "current_key_idx"]);
+  const storedKeys = keysData.openrouter_api_keys || [];
   let currentIdx = keysData.current_key_idx || 0;
   if (storedKeys.length > 0) {
     const nextIdx = (currentIdx + 1) % storedKeys.length;
@@ -179,47 +179,40 @@ async function getPageSnapshot(tabId) {
 
 async function getSelectedModel() {
   const data = await chrome.storage.local.get("selected_model");
-  return data.selected_model || "groq/llama-3.3-70b-versatile";
+  const model = data.selected_model || "openrouter/google/gemini-2.5-flash";
+  if (model.startsWith("groq/")) {
+    return "openrouter/google/gemini-2.5-flash";
+  }
+  return model;
 }
 
 async function resolveModelConfig() {
   const selectedModel = await getSelectedModel();
-  if (selectedModel.startsWith("openrouter/")) {
-    return {
-      provider: "openrouter",
-      url: "https://openrouter.ai/api/v1/chat/completions",
-      modelName: selectedModel.replace("openrouter/", "")
-    };
-  } else {
-    return {
-      provider: "groq",
-      url: "https://api.groq.com/openai/v1/chat/completions",
-      modelName: selectedModel.replace("groq/", "")
-    };
-  }
+  return {
+    provider: "openrouter",
+    url: "https://openrouter.ai/api/v1/chat/completions",
+    modelName: selectedModel.replace("openrouter/", "")
+  };
 }
 
-// Call AI API (Groq or OpenRouter) with retries and detailed error handling
-async function callGroq(messages, attemptedKeys = []) {
+// Call OpenRouter API with retries and detailed error handling
+async function callAI(messages, attemptedKeys = []) {
   const config = await resolveModelConfig();
   
-  const key = await getActiveKeyExcluding(attemptedKeys, config.provider);
+  const key = await getActiveKeyExcluding(attemptedKeys);
   if (!key) {
     if (attemptedKeys.length > 0) {
-      throw new Error(`All ${attemptedKeys.length} configured ${config.provider} keys failed in this request.`);
+      throw new Error(`All ${attemptedKeys.length} configured OpenRouter keys failed in this request.`);
     }
-    throw new Error(`No ${config.provider} API keys found! Add them in the extension options.`);
+    throw new Error("No OpenRouter API keys found! Add them in the extension options.");
   }
 
   let headers = { 
     "Content-Type": "application/json", 
-    "Authorization": `Bearer ${key}`
+    "Authorization": `Bearer ${key}`,
+    "HTTP-Referer": "https://github.com/infernoGurala/utopia-web",
+    "X-Title": "Utopia Agent"
   };
-  
-  if (config.provider === "openrouter") {
-    headers["HTTP-Referer"] = "https://github.com/infernoGurala/utopia-web";
-    headers["X-Title"] = "Utopia Agent";
-  }
 
   let res;
   try {
@@ -229,32 +222,32 @@ async function callGroq(messages, attemptedKeys = []) {
       body: JSON.stringify({ model: config.modelName, messages, max_tokens: 800, temperature: 0.1 })
     });
   } catch (err) {
-    console.error(`Fetch failed for ${config.provider} key:`, key.substring(0, 10), err);
+    console.error("Fetch failed for OpenRouter key:", key.substring(0, 10), err);
     await markKeyExhausted(key);
     attemptedKeys.push(key);
-    return callGroq(messages, attemptedKeys);
+    return callAI(messages, attemptedKeys);
   }
 
   if (res.status === 429 || res.status === 401) {
     await markKeyExhausted(key);
     attemptedKeys.push(key);
     
-    // Check if we can retry with a different key for this provider
-    const data = await chrome.storage.local.get("groq_api_keys");
-    const storedKeys = (data.groq_api_keys || []).filter(k => (k.provider || "groq") === config.provider);
+    // Check if we can retry with a different key
+    const data = await chrome.storage.local.get("openrouter_api_keys");
+    const storedKeys = (data.openrouter_api_keys || []).filter(k => k.status !== "invalid");
     const untriedKeys = storedKeys.filter(sk => !attemptedKeys.includes(sk.key));
     
     if (untriedKeys.length > 0) {
-      return callGroq(messages, attemptedKeys);
+      return callAI(messages, attemptedKeys);
     }
     
     const errText = await res.text().catch(() => "Unknown error response");
-    throw new Error(`All ${config.provider} keys rate-limited/invalid. Last status: ${res.status}. Response: ${errText.slice(0, 150)}`);
+    throw new Error(`All OpenRouter keys rate-limited/invalid. Last status: ${res.status}. Response: ${errText.slice(0, 150)}`);
   }
   
   if (!res.ok) {
     const errText = await res.text().catch(() => "Unknown error response");
-    throw new Error(`${config.provider} API returned error ${res.status}: ${errText.slice(0, 150)}`);
+    throw new Error(`OpenRouter API returned error ${res.status}: ${errText.slice(0, 150)}`);
   }
   
   const data = await res.json();
@@ -533,7 +526,7 @@ async function solveCurrentQuestion(tabId) {
       { role: "user",   content: "Answer this question." }
     ];
 
-    const raw = await callGroq(messages);
+    const raw = await callAI(messages);
     console.log("AI raw response:", raw);
     const { text, actions } = parseAI(raw);
     

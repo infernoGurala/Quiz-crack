@@ -1,6 +1,3 @@
-const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-const MODEL = "llama-3.3-70b-versatile";
-
 // Elements
 const toggleCard = document.getElementById("toggleCard");
 const toggleValue = document.getElementById("toggleValue");
@@ -20,9 +17,56 @@ const statusMessage = document.getElementById("statusMessage");
 const statusText = document.getElementById("statusText");
 const statusIcon = document.getElementById("statusIcon");
 const modelSelect = document.getElementById("modelSelect");
-const keyProviderSelect = document.getElementById("keyProviderSelect");
 
 let savedKeys = [];
+
+// Model metadata dictionary
+const MODEL_METADATA = {
+  "google/gemini-2.5-flash": {
+    context: "1,048,576 tokens",
+    caps: "⚡ Ultra-fast, extremely cost-effective, great for general knowledge and speed."
+  },
+  "google/gemini-2.5-pro": {
+    context: "1,048,576 tokens",
+    caps: "🧠 Outstanding reasoning, perfect for complex math, science, and long context."
+  },
+  "anthropic/claude-sonnet-4.6": {
+    context: "1,000,000 tokens",
+    caps: "🎯 Best-in-class reasoning, logical thinking, and high-accuracy answer selection."
+  },
+  "anthropic/claude-sonnet-4.5": {
+    context: "1,000,000 tokens",
+    caps: "✨ Highly intelligent, exceptional reasoning, logic, and factual recall."
+  },
+  "anthropic/claude-sonnet-4": {
+    context: "1,000,000 tokens",
+    caps: "🔍 Highly intelligent, great reasoning, structure, and accuracy."
+  },
+  "openai/gpt-5.5-pro": {
+    context: "1,050,000 tokens",
+    caps: "🏆 State-of-the-art general intelligence, logic, and complex MCQ parsing."
+  },
+  "openai/gpt-5.4-mini": {
+    context: "400,000 tokens",
+    caps: "⚡ Fast, lightweight, high accuracy for standard quiz questions."
+  },
+  "deepseek/deepseek-r1": {
+    context: "163,840 tokens",
+    caps: "🧩 Advanced reasoning, deep chain-of-thought, superb for math and hard science."
+  },
+  "deepseek/deepseek-chat": {
+    context: "131,072 tokens",
+    caps: "🚀 Fast, powerful, extremely cheap, excellent reasoning for general topics."
+  },
+  "meta-llama/llama-3.3-70b-instruct": {
+    context: "131,072 tokens",
+    caps: "🦙 High-performance open-weights model, excellent instruction following."
+  },
+  "meta-llama/llama-3.3-70b-instruct:free": {
+    context: "131,072 tokens",
+    caps: "🎁 Completely free to use, highly capable open model."
+  }
+};
 
 // Toggle Password Visibility
 toggleVisibility.addEventListener("click", () => {
@@ -37,19 +81,34 @@ toggleVisibility.addEventListener("click", () => {
 
 // Load Settings from Storage
 async function loadSettings() {
-  // 1. Load Keys
-  const data = await chrome.storage.local.get("groq_api_keys");
-  savedKeys = data.groq_api_keys || [];
+  // 1. Run Storage Migration if needed (groq_api_keys -> openrouter_api_keys)
+  const keysData = await chrome.storage.local.get(["groq_api_keys", "openrouter_api_keys"]);
+  if (keysData.groq_api_keys && !keysData.openrouter_api_keys) {
+    const migrated = keysData.groq_api_keys.filter(k => k.provider === "openrouter");
+    await chrome.storage.local.set({ openrouter_api_keys: migrated });
+    await chrome.storage.local.remove("groq_api_keys");
+    savedKeys = migrated;
+  } else {
+    savedKeys = keysData.openrouter_api_keys || [];
+  }
   renderKeys();
 
   // 2. Load Model
   const modelData = await chrome.storage.local.get("selected_model");
   if (modelData.selected_model) {
-    modelSelect.value = modelData.selected_model;
+    // If the saved model is a Groq model, map it to a default OpenRouter model
+    if (modelData.selected_model.startsWith("groq/")) {
+      modelSelect.value = "openrouter/google/gemini-2.5-flash";
+      await chrome.storage.local.set({ selected_model: "openrouter/google/gemini-2.5-flash" });
+    } else {
+      modelSelect.value = modelData.selected_model;
+    }
+  } else {
+    modelSelect.value = "openrouter/google/gemini-2.5-flash";
   }
 
-  // Sync provider and placeholder with selected model
-  syncProviderWithModel();
+  // Update details card for the selected model
+  updateModelDetails();
 
   // 3. Load Active State
   const stateData = await chrome.storage.local.get("extension_enabled");
@@ -98,7 +157,7 @@ ghostToggleCard.addEventListener("click", async () => {
 
   await chrome.storage.local.set({ ghost_mode: nextState });
   updateGhostToggleUI(nextState);
-  showStatus(nextState ? "Ghost Mode enabled — subtle toasts" : "Ghost Mode disabled — normal toasts", "success");
+  showStatus(nextState ? "Ghost Mode enabled — silent solver" : "Ghost Mode disabled — normal toasts", "success");
 });
 
 // Toggle Activation State on Click
@@ -112,32 +171,25 @@ toggleCard.addEventListener("click", async () => {
   showStatus(nextState ? "Utopia Agent Activated" : "Utopia Agent Deactivated", "success");
 });
 
-// Sync key provider dropdown and placeholder with selected model
-function syncProviderWithModel() {
-  const modelValue = modelSelect.value;
-  const provider = modelValue.split('/')[0]; // 'groq' or 'openrouter'
-  keyProviderSelect.value = provider;
-  updateKeyInputPlaceholder(provider);
-}
-
-function updateKeyInputPlaceholder(provider) {
-  if (provider === "groq") {
-    apiKeyInput.placeholder = "gsk_...";
-  } else {
-    apiKeyInput.placeholder = "sk-or-...";
-  }
+// Update dynamic model info in the details card
+function updateModelDetails() {
+  const model = modelSelect.value;
+  // Strip the 'openrouter/' prefix when matching the key
+  const metaKey = model.startsWith("openrouter/") ? model.replace("openrouter/", "") : model;
+  
+  const meta = MODEL_METADATA[metaKey] || {
+    context: "Unknown",
+    caps: "OpenRouter LLM model."
+  };
+  document.getElementById("modelContextLimit").textContent = meta.context;
+  document.getElementById("modelCapabilities").textContent = meta.caps;
 }
 
 // Model select listener
 modelSelect.addEventListener("change", async () => {
   await chrome.storage.local.set({ selected_model: modelSelect.value });
-  syncProviderWithModel();
+  updateModelDetails();
   showStatus(`Model updated to ${modelSelect.value}`, "success");
-});
-
-// Key provider manual select listener
-keyProviderSelect.addEventListener("change", () => {
-  updateKeyInputPlaceholder(keyProviderSelect.value);
 });
 
 // Render Stored Keys list
@@ -153,7 +205,7 @@ function renderKeys() {
     const item = document.createElement("div");
     item.className = "key-item";
 
-    const provider = keyData.provider || "groq";
+    const provider = keyData.provider || "openrouter";
     const maskedKey = maskKey(keyData.key);
     const statusText = keyData.status === "valid" ? "Verified" : keyData.status === "invalid" ? "Invalid key" : "Not tested";
     const statusClass = keyData.status === "valid" ? "active" : keyData.status === "invalid" ? "invalid" : "";
@@ -204,15 +256,13 @@ function maskKey(key) {
 // Add Key
 saveKeyBtn.addEventListener("click", async () => {
   const key = apiKeyInput.value.trim();
-  const provider = keyProviderSelect.value;
+  const provider = "openrouter";
 
   if (!key) {
     showStatus("Please enter an API key.", "error");
     return;
   }
-  if (provider === "groq" && !key.startsWith("gsk_")) {
-    showStatus("Warning: Groq key should start with 'gsk_'.", "info");
-  } else if (provider === "openrouter" && !key.startsWith("sk-or-")) {
+  if (!key.startsWith("sk-or-")) {
     showStatus("Warning: OpenRouter key should start with 'sk-or-'.", "info");
   }
 
@@ -225,11 +275,11 @@ saveKeyBtn.addEventListener("click", async () => {
   saveKeyBtn.disabled = true;
   showStatus("Validating and adding key...", "info");
 
-  const isValid = await validateApiKey(key, provider);
+  const isValid = await validateApiKey(key);
 
   if (isValid) {
     savedKeys.push({ key: key, provider: provider, status: "valid" });
-    await chrome.storage.local.set({ groq_api_keys: savedKeys });
+    await chrome.storage.local.set({ openrouter_api_keys: savedKeys });
     apiKeyInput.value = "";
     showStatus("API Key successfully validated and added!", "success");
     renderKeys();
@@ -242,7 +292,7 @@ saveKeyBtn.addEventListener("click", async () => {
 // Delete Key
 async function deleteKey(index) {
   savedKeys.splice(index, 1);
-  await chrome.storage.local.set({ groq_api_keys: savedKeys });
+  await chrome.storage.local.set({ openrouter_api_keys: savedKeys });
   showStatus("API Key deleted.", "info");
   renderKeys();
 }
@@ -251,11 +301,10 @@ async function deleteKey(index) {
 async function testKey(index) {
   showStatus(`Testing key ${index + 1}...`, "info");
   const keyData = savedKeys[index];
-  const provider = keyData.provider || "groq";
-  const isValid = await validateApiKey(keyData.key, provider);
+  const isValid = await validateApiKey(keyData.key);
   
   savedKeys[index].status = isValid ? "valid" : "invalid";
-  await chrome.storage.local.set({ groq_api_keys: savedKeys });
+  await chrome.storage.local.set({ openrouter_api_keys: savedKeys });
   
   if (isValid) {
     showStatus(`Key ${index + 1} is valid!`, "success");
@@ -265,26 +314,16 @@ async function testKey(index) {
   renderKeys();
 }
 
-// Validate Key against Provider Endpoint
-async function validateApiKey(key, provider) {
+// Validate Key against OpenRouter Endpoint
+async function validateApiKey(key) {
   try {
-    if (provider === "openrouter") {
-      const response = await fetch("https://openrouter.ai/api/v1/key", {
-        method: "GET",
-        headers: {
-          "Authorization": `Bearer ${key}`
-        }
-      });
-      return response.ok;
-    } else {
-      const response = await fetch("https://api.groq.com/openai/v1/models", {
-        method: "GET",
-        headers: {
-          "Authorization": `Bearer ${key}`
-        }
-      });
-      return response.ok;
-    }
+    const response = await fetch("https://openrouter.ai/api/v1/key", {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${key}`
+      }
+    });
+    return response.ok;
   } catch (err) {
     console.error("Error validating key:", err);
     return false;
