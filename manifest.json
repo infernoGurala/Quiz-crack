@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Utopia Agent (Headless)",
+  "version": "2.0.0",
+  "description": "Headless AI browser agent. Triggered by Ctrl+Shift+S, with popup configuration UI.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://api.groq.com/*",
+    "https://openrouter.ai/*"
+  ],
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "answer_question": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+S",
+        "mac": "MacCtrl+Shift+S"
+      },
+      "description": "Answer the current question on the active page"
+    }
+  }
+}
